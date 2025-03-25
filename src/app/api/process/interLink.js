@@ -66,7 +66,8 @@ function extractPhrasesFromContent(content) {
     for (const sentence of sentences) {
         // Skip URLs and existing markdown links
         const cleanSentence = sentence.replace(/\[.*?\]\(.*?\)/g, '') // Remove markdown links
-                                    .replace(/https?:\/\/[^\s)]+/g, ''); // Remove URLs
+                                    .replace(/https?:\/\/[^\s)]+/g, '') // Remove URLs
+                                    .replace(/\*\*(.*?)\*\*/g, '$1');  // Remove bold markers but keep content
         
         // Split sentence into words
         const words = cleanSentence.split(/\s+/).filter(w => {
@@ -80,17 +81,30 @@ function extractPhrasesFromContent(content) {
                    !/^[0-9-]+$/.test(w); // Skip numbers and dashes
         });
         
-        // Create sliding window of phrases (2-5 words)
+        // First try to find meaningful phrases (2-3 words)
         for (let i = 0; i < words.length; i++) {
-            for (let len = 2; len <= Math.min(5, words.length - i); len++) {
-                const phrase = words.slice(i, i + len).join(' ');
-                if (phrase.length >= 3) {  // Minimum 3 characters
-                    phrases.add(phrase);
+            // Try 3-word phrases first
+            if (i + 2 < words.length) {
+                const threeWordPhrase = words.slice(i, i + 3).join(' ');
+                if (threeWordPhrase.length >= 5) {
+                    phrases.add(threeWordPhrase);
                 }
             }
-            // Add single words if they're long enough (potential keywords)
-            if (words[i].length >= 4 && !words[i].includes('.')) {
-                phrases.add(words[i]);
+            // Then try 2-word phrases
+            if (i + 1 < words.length) {
+                const twoWordPhrase = words.slice(i, i + 2).join(' ');
+                if (twoWordPhrase.length >= 4) {
+                    phrases.add(twoWordPhrase);
+                }
+            }
+        }
+        
+        // Only add single words if they're significant terms
+        for (const word of words) {
+            if (word.length >= 5 && // Increased minimum length for single words
+                !word.includes('.') && 
+                /^[A-Z]/.test(word)) { // Prefer capitalized single words
+                phrases.add(word);
             }
         }
     }
@@ -118,44 +132,54 @@ function calculateSemanticSimilarity(phrase1, phrase2) {
     return Math.min(1, jaccardSim);
 }
 
-function findRelatedKeywords(contentPhrase, sitemapKeywords) {
-    // Clean and normalize the content phrase
-    const cleanPhrase = contentPhrase.toLowerCase().trim();
-    const phraseWords = cleanPhrase.split(/\s+/);
-    
-    // Skip very short phrases and common stop words
-    const stopWords = new Set(['a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'he', 
-        'in', 'is', 'it', 'its', 'of', 'on', 'or', 'that', 'the', 'to', 'was', 'were', 'will', 'with']);
-    
-    // Skip if the phrase is just stop words
-    const significantWords = phraseWords.filter(word => !stopWords.has(word) && word.length > 1);
-    if (significantWords.length === 0) {
-        return null;
-    }
-    
-    const matches = [];
-    
-    // Go through each sitemap keyword
-    for (const [sitemapKey, url] of sitemapKeywords) {
-        const cleanSitemapKey = sitemapKey.toLowerCase().replace(/-/g, ' ');
+function findRelatedKeywords(phrase, sitemapKeywords) {
+    const phraseWords = tokenizer.tokenize(phrase.toLowerCase());
+    if (!phraseWords || phraseWords.length === 0) return null;
+
+    let bestMatch = null;
+    let bestScore = 0;
+
+    for (const [keyword, metadata] of sitemapKeywords) {
+        const { url, isSingleWord } = metadata;
         
-        // Calculate semantic similarity
-        const semanticScore = calculateSemanticSimilarity(cleanPhrase, cleanSitemapKey);
+        // For single-word keywords, require exact match
+        if (isSingleWord) {
+            if (phrase.toLowerCase() === keyword) {
+                return {
+                    key: keyword,
+                    url,
+                    score: 1
+                };
+            }
+            continue;
+        }
+
+        // For multi-word keywords, use existing similarity logic
+        const keywordWords = tokenizer.tokenize(keyword);
+        if (!keywordWords || keywordWords.length === 0) continue;
+
+        // Calculate similarity using stemming
+        const phraseStems = new Set(phraseWords.map(word => cachedStem(word)));
+        const keywordStems = new Set(keywordWords.map(word => cachedStem(word)));
+
+        // Calculate Jaccard similarity
+        const intersection = new Set([...phraseStems].filter(x => keywordStems.has(x)));
+        const union = new Set([...phraseStems, ...keywordStems]);
         
-        if (semanticScore >= 0.70) {  // Increased threshold for better relevance
-            matches.push({ 
-                key: sitemapKey, 
-                url, 
-                score: semanticScore,
-                matchType: 'semantic',
-                commonWords: significantWords
-            });
+        const score = intersection.size / union.size;
+
+        if (score > bestScore) {
+            bestScore = score;
+            bestMatch = {
+                key: keyword,
+                url,
+                score
+            };
         }
     }
-    
-    // Sort matches by score and return the best match
-    matches.sort((a, b) => b.score - a.score);
-    return matches.length > 0 ? matches[0] : null;
+
+    // Return match only if score exceeds threshold
+    return bestScore >= 0.8 ? bestMatch : null;
 }
 
 function getContext(content, phrase) {
@@ -184,24 +208,31 @@ async function readSitemap(sitemapUrl) {
         const sitemapData = await fetchAndParseSitemap(sitemapUrl);
         const urls = await extractUrlsFromSitemap(sitemapData);
         
-        const urlMap = new Map();
+        const keywords = new Map();
         
         for (const url of urls) {
-            // Extract keywords from URL path segments
-            const pathSegments = new URL(url).pathname.split('/').filter(Boolean);
-            const keywords = pathSegments.map(segment => 
-                segment.replace(/-/g, ' ').toLowerCase()
-            )
-            
-            // Map each keyword to the URL
-            keywords.forEach(keyword => {
-                if (!urlMap.has(keyword)) {
-                    urlMap.set(keyword, url);
+            try {
+                // Extract the last part of the URL path
+                const pathSegment = new URL(url).pathname.split('/').pop();
+                if (!pathSegment) continue;
+
+                // Convert hyphenated path to keyword
+                const keyword = pathSegment.replace(/-/g, ' ');
+                
+                // Store both the original form and hyphenated form for matching
+                keywords.set(keyword, { url, isHyphenated: pathSegment.includes('-') });
+                if (pathSegment.includes('-')) {
+                    // Also store the hyphenated version as is
+                    keywords.set(pathSegment, { url, isHyphenated: true });
                 }
-            });
+                
+            } catch (error) {
+                console.error('Error processing URL:', url, error);
+                continue;
+            }
         }
         
-        return urlMap;
+        return keywords;
     } catch (error) {
         console.error('Error processing sitemap:', error);
         return new Map();
@@ -211,95 +242,172 @@ async function readSitemap(sitemapUrl) {
 async function processInternalLinks(content, sitemapUrl) {
     try {
         const sitemapKeywords = await readSitemap(sitemapUrl);
+        
         const addedLinks = [];
         const stats = { totalMatches: 0, uniqueUrls: new Set() };
         
-        // Extract phrases from content
-        const phrases = extractPhrasesFromContent(content);
+        // Keep track of positions where links exist to avoid nesting
+        const linkPositions = [];
         
-        // Track best match per URL
-        const urlBestMatches = new Map();
+        // Track which keywords have been linked to avoid duplicates
+        const linkedKeywords = new Set();
         
-        // First pass: Find all matches and keep only the best match per URL
-        for (const phrase of phrases) {
-            const match = findRelatedKeywords(phrase, sitemapKeywords);
-            if (match) {
-                const existingMatch = urlBestMatches.get(match.url);
-                if (!existingMatch || match.score > existingMatch.score) {
-                    urlBestMatches.set(match.url, {
-                        phrase,
-                        ...match
-                    });
-                }
-            }
+        // First pass: Find existing links and mark their positions
+        const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+        let match;
+        while ((match = linkRegex.exec(content)) !== null) {
+            linkPositions.push({
+                start: match.index,
+                end: match.index + match[0].length
+            });
         }
         
-        // Second pass: Apply the best matches
-        let modifiedContent = content;
-        const processedPhrases = new Set(); // Track processed phrases to avoid duplicates
+        // Function to check if a position overlaps with existing links
+        const isPositionSafe = (start, end) => {
+            return !linkPositions.some(pos => 
+                (start >= pos.start && start <= pos.end) || 
+                (end >= pos.start && end <= pos.end) ||
+                (start <= pos.start && end >= pos.end)
+            );
+        };
+
+        // Split content into lines to process non-header content
+        const lines = content.split('\n');
+        let processedContent = '';
+        let currentPosition = 0;
         
-        for (const [url, match] of urlBestMatches) {
-            const { phrase } = match;
-            
-            // Skip if we've already processed this phrase
-            if (processedPhrases.has(phrase)) {
+        // Process each line
+        for (const line of lines) {
+            // Skip header lines (starting with #)
+            if (line.trim().startsWith('#')) {
+                processedContent += line + '\n';
+                currentPosition += line.length + 1; // +1 for newline
                 continue;
             }
             
-            // Create a regex that matches the exact phrase but not within URLs or markdown links
-            const escapedPhrase = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const regex = new RegExp(
-                `(?<!\\[|\\]\\(|https?:\\/\\/[^\\s)]*?)${escapedPhrase}(?!\\]|\\)|[^\\s)]*?\\))`,
-                'g'
-            );
+            let currentLine = line;
+            let lineOffset = currentPosition;
             
-            // Only replace if the phrase exists and isn't already part of a link
-            if (regex.test(modifiedContent)) {
-                // Replace only the first occurrence that's not already a link
-                let replaced = false;
-                modifiedContent = modifiedContent.replace(regex, (match) => {
-                    if (!replaced) {
-                        replaced = true;
-                        return `[${phrase}](${url})`;
-                    }
-                    return match; // Keep subsequent occurrences as plain text
+            // Store markdown formatting positions
+            const boldRegex = /\*\*(.*?)\*\*/g;
+            const markdownFormats = [];
+            while ((match = boldRegex.exec(currentLine)) !== null) {
+                markdownFormats.push({
+                    type: 'bold',
+                    start: match.index,
+                    end: match.index + match[0].length,
+                    content: match[1]
                 });
-
-                if (replaced) {
-                    addedLinks.push({
-                        phrase,
-                        matchedWith: match.key,
-                        score: match.score,
-                        url: match.url,
-                        context: getContext(content, phrase)
+            }
+            
+            // Extract potential phrases from the line
+            const phrases = extractPhrasesFromContent(currentLine);
+            
+            // Sort phrases by length (longer phrases first)
+            phrases.sort((a, b) => b.length - a.length);
+            
+            // Find related keywords for each phrase
+            for (const phrase of phrases) {
+                // Skip if this phrase is already part of a link
+                const phraseIndex = currentLine.toLowerCase().indexOf(phrase.toLowerCase());
+                if (phraseIndex === -1) continue;
+                
+                const matchStart = lineOffset + phraseIndex;
+                const matchEnd = matchStart + phrase.length;
+                
+                if (!isPositionSafe(matchStart, matchEnd)) continue;
+                
+                // Check if phrase is within markdown formatting
+                const isInMarkdown = markdownFormats.some(format => {
+                    const phraseStartInLine = phraseIndex;
+                    const phraseEndInLine = phraseIndex + phrase.length;
+                    return (phraseStartInLine >= format.start && phraseEndInLine <= format.end);
+                });
+                
+                // Find related keywords using semantic similarity
+                const relatedKeyword = findRelatedKeywords(phrase, sitemapKeywords);
+                
+                if (relatedKeyword && relatedKeyword.score >= 0.8) {
+                    const { key, url } = relatedKeyword;
+                    
+                    // Skip if this keyword has already been linked
+                    if (linkedKeywords.has(key.toLowerCase())) {
+                        continue;
+                    }
+                    
+                    // For single words, check if they're part of a larger meaningful phrase
+                    if (!phrase.includes(' ')) {
+                        const surroundingText = getContext(currentLine, phrase);
+                        const words = surroundingText.split(/\s+/);
+                        const phraseIndex = words.findIndex(w => w.toLowerCase().includes(phrase.toLowerCase()));
+                        
+                        // Check words before and after
+                        if (phraseIndex !== -1) {
+                            const prevWord = phraseIndex > 0 ? words[phraseIndex - 1] : '';
+                            const nextWord = phraseIndex < words.length - 1 ? words[phraseIndex + 1] : '';
+                            
+                            // If the word is part of a meaningful phrase, skip it
+                            if ((prevWord && calculateSemanticSimilarity(prevWord + ' ' + phrase, key) > 0.5) ||
+                                (nextWord && calculateSemanticSimilarity(phrase + ' ' + nextWord, key) > 0.5)) {
+                                continue;
+                            }
+                        }
+                    }
+                    
+                    // Get the context to ensure relevance
+                    const context = getContext(currentLine, phrase);
+                    if (!context) continue;
+                    
+                    // Create the link, preserving any markdown formatting
+                    let link;
+                    if (isInMarkdown) {
+                        // For text within markdown formatting, wrap the markdown around the link
+                        link = `**[${phrase}](${url})**`;
+                    } else {
+                        link = `[${phrase}](${url})`;
+                    }
+                    
+                    const beforeMatch = currentLine.slice(0, phraseIndex);
+                    const afterMatch = currentLine.slice(phraseIndex + phrase.length);
+                    currentLine = beforeMatch + link + afterMatch;
+                    
+                    // Update link positions for future checks
+                    linkPositions.push({
+                        start: matchStart,
+                        end: matchStart + link.length
                     });
+                    
+                    // Mark this keyword as linked
+                    linkedKeywords.add(key.toLowerCase());
+                    
+                    addedLinks.push({ keyword: phrase, url });
                     stats.totalMatches++;
                     stats.uniqueUrls.add(url);
-                    processedPhrases.add(phrase);
                 }
             }
+            
+            processedContent += currentLine + '\n';
+            currentPosition += line.length + 1; // +1 for newline
         }
-        
-        return  {
+
+        return {
             found_links: addedLinks,
-            updated_content: modifiedContent,
-            stats: {
-                totalMatches: stats.totalMatches,
-                uniqueUrls: stats.uniqueUrls.size
+            updated_content: processedContent.trimEnd(), // Remove trailing newline
+            stats: { 
+                totalMatches: stats.totalMatches, 
+                uniqueUrls: stats.uniqueUrls.size 
             }
         };
     } catch (error) {
-        console.error('Error in processInternalLinks:', error);
+        console.error('Error processing internal links:', error);
         return {
             found_links: [],
             updated_content: content,
-            stats: {
-                totalMatches: 0,
-                uniqueUrls: 0
-            }
+            stats: { totalMatches: 0, uniqueUrls: 0 }
         };
     }
 }
+
 module.exports = {
     processInternalLinks,
     readSitemap
