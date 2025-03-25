@@ -1,6 +1,6 @@
-const axios = require('axios');
-const xml2js = require('xml2js');
-const natural = require('natural');
+import axios from 'axios';
+import xml2js from 'xml2js';
+import natural from 'natural';
 
 const tokenizer = new natural.WordTokenizer();
 const stemmer = natural.PorterStemmer;
@@ -203,7 +203,7 @@ function getContext(content, phrase) {
     }
 }
 
-async function readSitemap(sitemapUrl) {
+export async function readSitemap(sitemapUrl) {
     try {
         const sitemapData = await fetchAndParseSitemap(sitemapUrl);
         const urls = await extractUrlsFromSitemap(sitemapData);
@@ -239,7 +239,7 @@ async function readSitemap(sitemapUrl) {
     }
 }
 
-async function processInternalLinks(content, sitemapUrl) {
+export async function processInternalLinks(content, sitemapUrl) {
     try {
         const sitemapKeywords = await readSitemap(sitemapUrl);
         
@@ -408,7 +408,3 @@ async function processInternalLinks(content, sitemapUrl) {
     }
 }
 
-module.exports = {
-    processInternalLinks,
-    readSitemap
-};

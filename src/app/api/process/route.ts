@@ -1,8 +1,9 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server';
-import { processInternalLinks, readSitemap } from './interLink.js';
+import {processInternalLinks, readSitemap} from './interLink.js';
 
 export async function POST(request: Request) {
-  try {
+  try { 
     const { content, sitemapUrl } = await request.json();
     
     if (!content || !sitemapUrl) {
