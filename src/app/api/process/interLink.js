@@ -16,15 +16,24 @@ function cachedStem(word) {
     return stemmed;
 }
 
-
 async function fetchAndParseSitemap(sitemapUrl) {
     try {
-        const response = await axios.get(sitemapUrl);
+        // Add timeout to axios request
+        const response = await axios.get(sitemapUrl, {
+            timeout: 30000, // 30 seconds timeout
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; InternalLinkBot/1.0)'
+            }
+        });
         const parser = new xml2js.Parser();
-        return await parser.parseStringPromise(response.data);
+        const result = await parser.parseStringPromise(response.data);
+        if (!result) {
+            throw new Error('Failed to parse sitemap XML');
+        }
+        return result;
     } catch (error) {
         console.error(`Error fetching sitemap ${sitemapUrl}:`, error);
-        return null;
+        throw new Error(`Failed to fetch or parse sitemap: ${error.message}`);
     }
 }
 
@@ -239,10 +248,13 @@ export async function readSitemap(sitemapUrl) {
     }
 }
 
-export async function processInternalLinks(content, sitemapUrl) {
+export async function processInternalLinks(content, sitemapKeywords) {
     try {
-        const sitemapKeywords = await readSitemap(sitemapUrl);
-        
+        // sitemapKeywords is now passed directly as a Map
+        if (!(sitemapKeywords instanceof Map)) {
+            throw new Error('Invalid sitemap data format');
+        }
+
         const addedLinks = [];
         const stats = { totalMatches: 0, uniqueUrls: new Set() };
         
@@ -407,4 +419,3 @@ export async function processInternalLinks(content, sitemapUrl) {
         };
     }
 }
-

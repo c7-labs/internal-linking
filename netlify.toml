@@ -4,3 +4,15 @@
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
+
+[functions]
+  node_bundler = "esbuild"
+  external_node_modules = ["axios", "natural", "xml2js"]
+  included_files = ["src/app/api/process/**"]
+
+[build.environment]
+  NODE_VERSION = "18"
+  
+[functions."*"]
+  memory = 1024
+  timeout = 30
