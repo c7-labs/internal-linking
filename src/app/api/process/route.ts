@@ -5,13 +5,28 @@ import {processInternalLinks, readSitemap} from './interLink.js';
 export const maxDuration = 300; // Set max duration to 300 seconds (5 minutes)
 export const dynamic = 'force-dynamic'; // Disable static optimization
 
+// Add timeout to fetch operations
+const fetchWithTimeout = async (url: string, timeout = 30000) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
+};
+
 export async function POST(request: Request) {
   console.log('API Route: Starting POST request processing');
   try { 
     const contentType = request.headers.get('content-type');
     if (!contentType?.includes('application/json')) {
-      return NextResponse.json(
-        { error: 'Content-Type must be application/json' },
+      return new NextResponse(
+        JSON.stringify({ error: 'Content-Type must be application/json' }),
         { 
           status: 400,
           headers: {
@@ -21,12 +36,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const { content, sitemapUrl } = await request.json();
+    const body = await request.json();
+    const { content, sitemapUrl } = body;
     
     if (!content || !sitemapUrl) {
       console.log('API Route: Missing required fields', { content: !!content, sitemapUrl: !!sitemapUrl });
-      return NextResponse.json(
-        { error: 'Content and sitemap URL are required' },
+      return new NextResponse(
+        JSON.stringify({ error: 'Content and sitemap URL are required' }),
         { 
           status: 400,
           headers: {
@@ -38,7 +54,7 @@ export async function POST(request: Request) {
 
     console.log('Step 1: Starting to process content with:', { sitemapUrl, contentLength: content.length });
     
-    // First test if we can read the sitemap
+    // First test if we can read the sitemap with timeout
     console.log('Step 2: Testing sitemap access...');
     try {
       const sitemapData = await readSitemap(sitemapUrl);
@@ -51,8 +67,8 @@ export async function POST(request: Request) {
       const result = await processInternalLinks(content, sitemapData);
       console.log('Step 4: Content processed successfully');
       
-      return NextResponse.json(
-        { result },
+      return new NextResponse(
+        JSON.stringify({ result }),
         { 
           status: 200,
           headers: {
@@ -67,11 +83,11 @@ export async function POST(request: Request) {
         name: error.name
       });
       
-      return NextResponse.json(
-        { 
+      return new NextResponse(
+        JSON.stringify({ 
           error: error.message || 'Error processing content',
           details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-        },
+        }),
         { 
           status: 500,
           headers: {
@@ -87,8 +103,8 @@ export async function POST(request: Request) {
       name: error.name
     });
     
-    return NextResponse.json(
-      { error: 'Invalid request format' },
+    return new NextResponse(
+      JSON.stringify({ error: 'Invalid request format' }),
       { 
         status: 400,
         headers: {
