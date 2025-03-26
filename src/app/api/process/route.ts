@@ -6,19 +6,19 @@ export const maxDuration = 300; // Set max duration to 300 seconds (5 minutes)
 export const dynamic = 'force-dynamic'; // Disable static optimization
 
 // Add timeout to fetch operations
-const fetchWithTimeout = async (url: string, timeout = 30000) => {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
+// const fetchWithTimeout = async (url: string, timeout = 30000) => {
+//   const controller = new AbortController();
+//   const timeoutId = setTimeout(() => controller.abort(), timeout);
   
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    return response;
-  } catch (error) {
-    clearTimeout(timeoutId);
-    throw error;
-  }
-};
+//   try {
+//     const response = await fetch(url, { signal: controller.signal });
+//     clearTimeout(timeoutId);
+//     return response;
+//   } catch (error) {
+//     clearTimeout(timeoutId);
+//     throw error;
+//   }
+// };
 
 export async function POST(request: Request) {
   console.log('API Route: Starting POST request processing');
