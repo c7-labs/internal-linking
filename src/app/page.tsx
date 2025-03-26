@@ -180,11 +180,11 @@ export default function Home() {
       setError('');
       setResult(null);
       
-      // In development, use the local API endpoint
-      // In production (Netlify), use the functions endpoint
-      const isNetlify = Boolean(process.env.NEXT_PUBLIC_NETLIFY);
-      const endpoint = isNetlify ? '/.netlify/functions/server' : '/api/process';
-        
+      // Use the Netlify function endpoint in production, fallback to local API in development
+      // const endpoint = process.env.NODE_ENV === 'production' 
+      //   ? '/.netlify/functions/server'
+      //   : '/api/process';
+        const endpoint = '/.netlify/functions/server';
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
