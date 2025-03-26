@@ -6,13 +6,33 @@ export const maxDuration = 300; // Set max duration to 300 seconds (5 minutes)
 export const dynamic = 'force-dynamic'; // Disable static optimization
 
 export async function POST(request: Request) {
+  console.log('API Route: Starting POST request processing');
   try { 
+    const contentType = request.headers.get('content-type');
+    if (!contentType?.includes('application/json')) {
+      return NextResponse.json(
+        { error: 'Content-Type must be application/json' },
+        { 
+          status: 400,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+    }
+
     const { content, sitemapUrl } = await request.json();
     
     if (!content || !sitemapUrl) {
+      console.log('API Route: Missing required fields', { content: !!content, sitemapUrl: !!sitemapUrl });
       return NextResponse.json(
         { error: 'Content and sitemap URL are required' },
-        { status: 400 }
+        { 
+          status: 400,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
       );
     }
 
@@ -31,7 +51,15 @@ export async function POST(request: Request) {
       const result = await processInternalLinks(content, sitemapData);
       console.log('Step 4: Content processed successfully');
       
-      return NextResponse.json({ result }, { status: 200 });
+      return NextResponse.json(
+        { result },
+        { 
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
     } catch (error: any) {
       console.error('API Error:', {
         message: error.message,
@@ -44,7 +72,12 @@ export async function POST(request: Request) {
           error: error.message || 'Error processing content',
           details: process.env.NODE_ENV === 'development' ? error.stack : undefined
         },
-        { status: 500 }
+        { 
+          status: 500,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
       );
     }
   } catch (error: any) {
@@ -55,11 +88,13 @@ export async function POST(request: Request) {
     });
     
     return NextResponse.json(
+      { error: 'Invalid request format' },
       { 
-        error: 'Invalid request format',
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      },
-      { status: 400 }
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
     );
   }
 }

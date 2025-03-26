@@ -1,29 +1,34 @@
 [build]
   command = "npm run build"
   publish = ".next"
-  edge_functions = "netlify/edge-functions"
+  functions = "netlify/functions"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
-[build.environment]
-  NEXT_USE_NETLIFY_EDGE = "true"
-  NODE_VERSION = "18"
-  NEXT_TELEMETRY_DISABLED = "1"
-
 [functions]
+  node_bundler = "esbuild"
+  external_node_modules = ["axios", "natural", "xml2js"]
+  directory = "netlify/functions"
   included_files = ["src/app/api/**"]
 
-[[edge_functions]]
-  path = "/api/*"
-  function = "api"
+[build.environment]
+  NODE_VERSION = "18"
+  NEXT_TELEMETRY_DISABLED = "1"
+  
+[functions."*"]
+  memory = 1024
+  timeout = 30
 
 [[redirects]]
   from = "/api/*"
-  to = "/.netlify/functions/api/:splat"
+  to = "/.netlify/functions/server"
   status = 200
+  force = true
+  headers = {Content-Type = "application/json"}
 
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
+  headers = {Content-Type = "text/html"}
