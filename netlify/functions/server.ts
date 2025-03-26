@@ -1,63 +1,77 @@
 import { Context } from '@netlify/functions'
-
-// Extend RequestInit type to include duplex
-interface ExtendedRequestInit extends RequestInit {
-  duplex?: 'half'
-}
+import { processInternalLinks, readSitemap } from '../../src/app/api/process/interLink.js'
 
 export default async function handler(req: Request, context: Context) {
   try {
-    const url = new URL(req.url)
-    
-    // Ensure we're forwarding to the correct API endpoint
-    const targetPath = url.pathname.startsWith('/.netlify/functions/server') 
-      ? url.pathname.replace('/.netlify/functions/server', '/api/process')
-      : url.pathname
-
-    console.log('Forwarding request to:', targetPath)
-    
-    // Clone the request body
-    let body: string | null = null
-    if (req.body) {
-      const contentType = req.headers.get('content-type')
-      if (contentType?.includes('application/json')) {
-        const json = await req.json()
-        body = JSON.stringify(json)
-      } else {
-        body = await req.text()
-      }
+    // Only accept POST requests
+    if (req.method !== 'POST') {
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+        status: 405,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
     }
-    
-    // Clean up headers
-    const headers = new Headers()
-    headers.set('Content-Type', 'application/json')
-    
-    // Forward the request to the Next.js API route
-    const response = await fetch(`${url.origin}${targetPath}`, {
-      method: req.method,
-      headers,
-      body,
-      duplex: 'half'
-    } as ExtendedRequestInit)
 
-    const responseData = await response.text()
-    console.log('Response status:', response.status)
+    // Verify content type
+    const contentType = req.headers.get('content-type');
+    if (!contentType?.includes('application/json')) {
+      return new Response(JSON.stringify({ error: 'Content-Type must be application/json' }), {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+
+    // Parse request body
+    const { content, sitemapUrl } = await req.json();
     
-    const responseHeaders = new Headers()
-    responseHeaders.set('Content-Type', 'application/json')
+    if (!content || !sitemapUrl) {
+      console.log('Missing required fields', { content: !!content, sitemapUrl: !!sitemapUrl });
+      return new Response(JSON.stringify({ error: 'Content and sitemap URL are required' }), {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+
+    console.log('Processing content with:', { sitemapUrl, contentLength: content.length });
     
-    return new Response(responseData, {
-      status: response.status,
-      headers: responseHeaders
-    })
-  } catch (error) {
-    console.error('Server function error:', error)
-    const headers = new Headers()
-    headers.set('Content-Type', 'application/json')
+    // Read sitemap
+    console.log('Reading sitemap...');
+    const sitemapData = await readSitemap(sitemapUrl);
+    if (!sitemapData) {
+      throw new Error('Failed to read sitemap data');
+    }
+    console.log('Sitemap read successfully, URL count:', sitemapData?.size || 0);
+
+    // Process content
+    const result = await processInternalLinks(content, sitemapData);
+    console.log('Content processed successfully');
     
-    return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+    return new Response(JSON.stringify({ result }), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+  } catch (error: any) {
+    console.error('Processing error:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+    
+    return new Response(JSON.stringify({ 
+      error: error.message || 'Error processing content',
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    }), {
       status: 500,
-      headers
-    })
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
   }
 }
