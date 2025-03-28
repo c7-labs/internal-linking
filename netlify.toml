@@ -11,9 +11,8 @@
   functions = "netlify/functions"
   functionsPort = 9999
 
-[functions]
-  timeout = 60
-  memory = 1024
+[functions.timeout]
+  timeout = 26
 
 [[redirects]]
   from = "/.netlify/functions/*"
